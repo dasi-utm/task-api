@@ -1,11 +1,10 @@
 services:
   api:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ../../
     ports:
       - "3001:3001"
-    environment:
+    environment: # te rog Adrian sa pui totul asta in ../config/.env.dev
       - ASPNETCORE_ENVIRONMENT=Development
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=taskmanager;Username=taskmanager;Password=taskmanager_dev
       - Jwt__Key=TaskManagerSuperSecretKey_ChangeInProduction_AtLeast32Chars!
