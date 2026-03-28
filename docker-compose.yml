@@ -17,6 +17,8 @@ services:
       - RabbitMQ__UserName=guest
       - RabbitMQ__Password=guest
       - RabbitMQ__Exchange=task-events
+    networks:
+      - taskflow-net
     depends_on:
       - postgres
       - rabbitmq
@@ -30,6 +32,8 @@ services:
       - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - taskflow-net
 
   rabbitmq:
     image: rabbitmq:3-management-alpine
@@ -41,7 +45,13 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - taskflow-net
 
 volumes:
   postgres_data:
   rabbitmq_data:
+
+networks:
+  taskflow-net:
+    external: true
