@@ -3,6 +3,8 @@ using TaskManager.API.Hubs;
 using TaskManager.API.Middleware;
 using TaskManager.API.Services;
 using TaskManager.Application.Interfaces;
+using Microsoft.EntityFrameworkCore;
+using TaskManager.Infrastructure.Data;
 
 var builder = WebApplication.CreateBuilder(args);
 
