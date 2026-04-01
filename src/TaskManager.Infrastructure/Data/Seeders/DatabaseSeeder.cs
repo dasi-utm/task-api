@@ -7,25 +7,60 @@ namespace TaskManager.Infrastructure.Data.Seeders;
 
 public static class DatabaseSeeder
 {
+    private static readonly (string Email, string Password, string FirstName, string LastName, UserRole Role)[] SeedUsers =
+    [
+        ("admin@taskmanager.com", "Admin123!", "Admin", "User", UserRole.Admin),
+        ("manager@taskmanager.com", "Manager123!", "Project", "Manager", UserRole.Manager),
+        ("dev@taskmanager.com", "User123!", "Ion", "Popescu", UserRole.User),
+    ];
+
     public static async Task SeedAsync(AppDbContext context)
     {
-        if (await context.Users.AnyAsync())
-            return;
+        var users = await SeedUsersAsync(context);
+        if (users is not null)
+            await SeedTasksAsync(context, users.Value.admin, users.Value.manager, users.Value.dev);
+    }
 
-        var adminHash = BCrypt.Net.BCrypt.HashPassword("Admin123!");
-        var admin = User.Create("admin@taskmanager.com", adminHash, "Admin", "User");
-        admin.UpdateRole(UserRole.Admin);
+    private static async Task<(User admin, User manager, User dev)?> SeedUsersAsync(AppDbContext context)
+    {
+        var seedEmails = SeedUsers.Select(u => u.Email).ToList();
+        var existingEmails = await context.Users
+            .Where(u => seedEmails.Contains(u.Email))
+            .Select(u => u.Email)
+            .ToListAsync();
 
-        var managerHash = BCrypt.Net.BCrypt.HashPassword("Manager123!");
-        var manager = User.Create("manager@taskmanager.com", managerHash, "Project", "Manager");
-        manager.UpdateRole(UserRole.Manager);
+        if (existingEmails.Count == SeedUsers.Length)
+            return null; // all seed users already exist
 
-        var userHash = BCrypt.Net.BCrypt.HashPassword("User123!");
-        var dev = User.Create("dev@taskmanager.com", userHash, "Ion", "Popescu");
+        var created = new List<User>();
+        foreach (var (email, password, firstName, lastName, role) in SeedUsers)
+        {
+            if (existingEmails.Contains(email)) continue;
+            var hash = BCrypt.Net.BCrypt.HashPassword(password);
+            var user = User.Create(email, hash, firstName, lastName);
+            if (role != UserRole.User) user.UpdateRole(role);
+            context.Users.Add(user);
+            created.Add(user);
+        }
 
-        context.Users.AddRange(admin, manager, dev);
+        if (created.Count == 0) return null;
+
         ClearDomainEvents(context);
         await context.SaveChangesAsync();
+
+        // Reload all seed users (some may have existed before)
+        var admin = await context.Users.FirstAsync(u => u.Email == "admin@taskmanager.com");
+        var manager = await context.Users.FirstAsync(u => u.Email == "manager@taskmanager.com");
+        var dev = await context.Users.FirstAsync(u => u.Email == "dev@taskmanager.com");
+
+        return (admin, manager, dev);
+    }
+
+    private static async Task SeedTasksAsync(AppDbContext context, User admin, User manager, User dev)
+    {
+        // Skip if seed tasks already exist
+        if (await context.Tasks.AnyAsync(t => t.Title == "Setup project infrastructure"))
+            return;
 
         var tasks = new[]
         {
