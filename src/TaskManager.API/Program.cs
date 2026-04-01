@@ -5,6 +5,7 @@ using TaskManager.API.Services;
 using TaskManager.Application.Interfaces;
 using Microsoft.EntityFrameworkCore;
 using TaskManager.Infrastructure.Data;
+using TaskManager.Infrastructure.Data.Seeders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -47,9 +48,12 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 app.MapHub<TaskHub>("/hubs/tasks");
-var scope = app.Services.CreateScope();
-var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-db.Database.Migrate();
+await using (var scope = app.Services.CreateAsyncScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    db.Database.Migrate();
+    await DatabaseSeeder.SeedAsync(db);
+}
 
 app.Run();
 
