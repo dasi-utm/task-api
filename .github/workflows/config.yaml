@@ -20,11 +20,9 @@ env:
 
 jobs:
   # ============================================
-  # CI STAGES
+  # CI STAGES (All in one job to share restored packages)
   # ============================================
-
-  # 1. RESTORE DEPENDENCIES
-  restore:
+  build-and-test:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -46,41 +44,8 @@ jobs:
       - name: Restore dependencies
         run: dotnet restore
 
-  # 2. BUILD APPLICATION (without --no-restore to be safe)
-  build:
-    runs-on: ubuntu-latest
-    needs: restore
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
       - name: Build application
         run: dotnet build --configuration Release --no-restore
-
-      - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-output
-          path: ./src/TaskManager.API/bin/Release/
-          retention-days: 1
-
-  # 3. UNIT TESTS
-  unit-tests:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Run Unit Tests
         run: |
@@ -90,28 +55,7 @@ jobs:
             --verbosity normal \
             --logger "trx;LogFileName=unit-tests.trx"
 
-      - name: Upload unit test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: unit-test-results
-          path: ./tests/TaskManager.UnitTests/TestResults/
-          retention-days: 7
-
-  # 4. INTEGRATION TESTS
-  integration-tests:
-    runs-on: ubuntu-latest
-    needs: build
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Start test dependencies
+      - name: Start integration test dependencies
         run: |
           docker network create test-network || true
           docker run -d --name rabbitmq-test --network test-network -p 5672:5672 -p 15672:15672 rabbitmq:3.13-management
@@ -137,12 +81,12 @@ jobs:
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: taskmanager_test
 
-      - name: Upload integration test results
+      - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-test-results
-          path: ./tests/TaskManager.IntegrationTests/TestResults/
+          name: test-results
+          path: ./tests/**/TestResults/
           retention-days: 7
 
       - name: Cleanup test containers
@@ -152,38 +96,17 @@ jobs:
           docker rm rabbitmq-test postgres-test || true
           docker network rm test-network || true
 
-  # 5. CODE QUALITY & STATIC ANALYSIS
-  code-quality:
-    runs-on: ubuntu-latest
-    needs: restore
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Install dotnet-format
-        run: dotnet tool install -g dotnet-format
-
       - name: Check code formatting
         run: |
           dotnet format --verify-no-changes --verbosity diagnostic || \
           echo "⚠️ Code formatting issues found. Run 'dotnet format' locally to fix."
 
-      - name: Run static analysis
-        run: dotnet build --configuration Release --no-restore /p:RunAnalyzers=true
-
   # ============================================
   # CD STAGES (Only on main branch)
   # ============================================
-
-  # 6. BUILD AND PUSH DOCKER IMAGE
   docker-build-push:
     runs-on: ubuntu-latest
-    needs: [unit-tests, integration-tests, code-quality]
+    needs: build-and-test
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     steps:
       - name: Checkout code
@@ -207,9 +130,9 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker $GAR_LOCATION-docker.pkg.dev --quiet
 
-      - name: Set image tags
+      - name: Set image tag
         run: |
-          echo "IMAGE_URI_SHA=$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${GITHUB_SHA}" >> $GITHUB_ENV
+          echo "IMAGE_URI=$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:${GITHUB_SHA}" >> $GITHUB_ENV
           echo "IMAGE_URI_LATEST=$GAR_LOCATION-docker.pkg.dev/$PROJECT_ID/$GAR_REPOSITORY/$IMAGE_NAME:latest" >> $GITHUB_ENV
 
       - name: Build and push image
@@ -219,7 +142,7 @@ jobs:
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.IMAGE_URI_SHA }}
+            ${{ env.IMAGE_URI }}
             ${{ env.IMAGE_URI_LATEST }}
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
@@ -228,10 +151,9 @@ jobs:
       - name: Log image info
         run: |
           echo "✅ Image built and pushed:"
-          echo "  - SHA version: $IMAGE_URI_SHA"
+          echo "  - SHA version: $IMAGE_URI"
           echo "  - Latest version: $IMAGE_URI_LATEST"
 
-  # 7. DEPLOY TO GKE
   deploy-to-gke:
     runs-on: ubuntu-latest
     needs: docker-build-push
@@ -268,9 +190,7 @@ jobs:
         run: |
           echo "✅ Deployment completed"
           kubectl get pods -n services | grep taskmanager-api
-          kubectl logs -l app=taskmanager-api -n services --tail=20
 
-  # 8. VERIFY DEPLOYMENT
   verify-deployment:
     runs-on: ubuntu-latest
     needs: deploy-to-gke
@@ -285,6 +205,3 @@ jobs:
           echo "🔧 Commit: ${{ github.sha }}"
           echo "🚀 Deployment: taskmanager-api"
           echo "=========================================="
-          echo ""
-          echo "📋 Pipeline logs available at:"
-          echo "   https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
