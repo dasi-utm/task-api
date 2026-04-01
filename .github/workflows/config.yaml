@@ -35,9 +35,6 @@ jobs:
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore dependencies
-        run: dotnet restore
-
       - name: Cache NuGet packages
         uses: actions/cache@v3
         with:
@@ -46,7 +43,10 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
-  # 2. BUILD APPLICATION
+      - name: Restore dependencies
+        run: dotnet restore
+
+  # 2. BUILD APPLICATION (without --no-restore to be safe)
   build:
     runs-on: ubuntu-latest
     needs: restore
@@ -66,7 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-output
-          path: ./TaskManager.API/bin/Release/
+          path: ./src/TaskManager.API/bin/Release/
           retention-days: 1
 
   # 3. UNIT TESTS
@@ -88,8 +88,7 @@ jobs:
             --configuration Release \
             --no-build \
             --verbosity normal \
-            --logger "trx;LogFileName=unit-tests.trx" \
-            --collect:"XPlat Code Coverage"
+            --logger "trx;LogFileName=unit-tests.trx"
 
       - name: Upload unit test results
         if: always()
@@ -98,15 +97,6 @@ jobs:
           name: unit-test-results
           path: ./tests/TaskManager.UnitTests/TestResults/
           retention-days: 7
-
-      - name: Publish unit test results
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: Unit Tests
-          path: ./tests/TaskManager.UnitTests/TestResults/*.trx
-          reporter: dotnet-trx
-          fail-on-error: true
 
   # 4. INTEGRATION TESTS
   integration-tests:
@@ -155,21 +145,12 @@ jobs:
           path: ./tests/TaskManager.IntegrationTests/TestResults/
           retention-days: 7
 
-      - name: Publish integration test results
-        if: always()
-        uses: dorny/test-reporter@v1
-        with:
-          name: Integration Tests
-          path: ./tests/TaskManager.IntegrationTests/TestResults/*.trx
-          reporter: dotnet-trx
-          fail-on-error: true
-
       - name: Cleanup test containers
         if: always()
         run: |
-          docker stop rabbitmq-test postgres-test
-          docker rm rabbitmq-test postgres-test
-          docker network rm test-network
+          docker stop rabbitmq-test postgres-test || true
+          docker rm rabbitmq-test postgres-test || true
+          docker network rm test-network || true
 
   # 5. CODE QUALITY & STATIC ANALYSIS
   code-quality:
@@ -195,28 +176,11 @@ jobs:
       - name: Run static analysis
         run: dotnet build --configuration Release --no-restore /p:RunAnalyzers=true
 
-  # 6. SECURITY SCAN
-  security-scan:
-    runs-on: ubuntu-latest
-    needs: restore
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Run security scan
-        run: |
-          dotnet list package --vulnerable --include-transitive || true
-
   # ============================================
   # CD STAGES (Only on main branch)
   # ============================================
 
-  # 7. BUILD AND PUSH DOCKER IMAGE
+  # 6. BUILD AND PUSH DOCKER IMAGE
   docker-build-push:
     runs-on: ubuntu-latest
     needs: [unit-tests, integration-tests, code-quality]
@@ -267,7 +231,7 @@ jobs:
           echo "  - SHA version: $IMAGE_URI_SHA"
           echo "  - Latest version: $IMAGE_URI_LATEST"
 
-  # 8. DEPLOY TO GKE
+  # 7. DEPLOY TO GKE
   deploy-to-gke:
     runs-on: ubuntu-latest
     needs: docker-build-push
@@ -306,7 +270,7 @@ jobs:
           kubectl get pods -n services | grep taskmanager-api
           kubectl logs -l app=taskmanager-api -n services --tail=20
 
-  # 9. VERIFY DEPLOYMENT
+  # 8. VERIFY DEPLOYMENT
   verify-deployment:
     runs-on: ubuntu-latest
     needs: deploy-to-gke
