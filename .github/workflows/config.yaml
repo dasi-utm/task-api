@@ -205,3 +205,11 @@ jobs:
           echo "🔧 Commit: ${{ github.sha }}"
           echo "🚀 Deployment: taskmanager-api"
           echo "=========================================="
+
+      - name: Notify Telegram
+        if: success()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d parse_mode="Markdown" \
+            -d text="✅ *Deployment succeeded, Exam passed*%0A%0A🚀 *taskmanager-api* deployed to GKE%0A📦 Commit: \`${GITHUB_SHA::7}\`%0A👤 By: ${{ github.actor }}"
